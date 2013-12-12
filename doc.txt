@@ -1,0 +1,98 @@
+drivers/md/raid5.c
+-----
+struct md_personality raid6_personality{
+	...
+	.make_request	= make_request,
+	...
+}	
+
+make_request() 
+	--> sync_request() 
+		--> handle_stripe() 
+			--> raid_run_ops() 
+				--> ops_run_compute5() 
+					--> async_xor()
+				--> ops_run_compute6_1()
+					--> async_gen_syndrome() /*missing Q*/
+					--> async_xor() /* Compute any data- or P-drive using XOR */
+				--> ops_run_compute6_2()
+					--> /* Missing D+Q: recompute D from P, then recompute Q */
+					--> async_gen_syndrome() /* Missing P+Q, just recompute */
+					--> async_raid6_datap_recov() /* We're missing D+P. */
+					--> async_raid6_2data_recov() /* We're missing D+D. */
+
+=====================
+crypto/async_tx/async_pq.c
+------
+/**
+ * async_gen_syndrome - asynchronously calculate a raid6 syndrome
+ * @blocks: source blocks from idx 0..disks-3, P @ disks-2 and Q @ disks-1
+ * @offset: common offset into each block (src and dest) to start transaction
+ * @disks: number of blocks (including missing P or Q, see below)
+ * @len: length of operation in bytes
+ * @submit: submission/completion modifiers
+ *
+ * General note: This routine assumes a field of GF(2^8) with a
+ * primitive polynomial of 0x11d and a generator of {02}.
+ *
+ * 'disks' note: callers can optionally omit either P or Q (but not
+ * both) from the calculation by setting blocks[disks-2] or
+ * blocks[disks-1] to NULL.  When P or Q is omitted 'len' must be <=
+ * PAGE_SIZE as a temporary buffer of this size is used in the
+ * synchronous path.  'disks' always accounts for both destination
+ * buffers.  If any source buffers (blocks[i] where i < disks - 2) are
+ * set to NULL those buffers will be replaced with the raid6_zero_page
+ * in the synchronous path and omitted in the hardware-asynchronous
+ * path.
+ *
+ * 'blocks' note: if submit->scribble is NULL then the contents of
+ * 'blocks' may be overwritten to perform address conversions
+ * (dma_map_page() or page_address()).
+ */ 
+async_gen_syndrome()
+	--> do_async_gen_syndrome() /*asynchronously calculate P and/or Q*/
+	--> do_sync_gen_syndrome() /*synchronously calculate a raid6 syndrome*/
+
+=======================
+include/linux/raid/pq.h
+-------
+struct raid6_calls {
+	void (*gen_syndrome)(int, size_t, void **);
+	int  (*valid)(void);	/* Returns 1 if this routine set is usable */
+	const char *name;	/* Name of this routine set */
+	int prefer;		/* Has special performance attribute */
+};
+
+extern const struct raid6_calls raid6_intx1;
+=======================
+lib/raid6/sse1.c
+-------
+const struct raid6_calls raid6_sse1x1 = {
+	raid6_sse11_gen_syndrome,
+	raid6_have_sse1_or_mmxext,
+	"sse1x1",
+	1			/* Has cache hints */
+};
+
+extern const struct raid6_calls raid6_intx2;
+extern const struct raid6_calls raid6_intx4;
+extern const struct raid6_calls raid6_intx8;
+extern const struct raid6_calls raid6_intx16;
+extern const struct raid6_calls raid6_intx32;
+extern const struct raid6_calls raid6_mmxx1;
+extern const struct raid6_calls raid6_mmxx2;
+extern const struct raid6_calls raid6_sse1x1;
+extern const struct raid6_calls raid6_sse1x2;
+extern const struct raid6_calls raid6_sse2x1;
+extern const struct raid6_calls raid6_sse2x2;
+extern const struct raid6_calls raid6_sse2x4;
+extern const struct raid6_calls raid6_altivec1;
+extern const struct raid6_calls raid6_altivec2;
+extern const struct raid6_calls raid6_altivec4;
+extern const struct raid6_calls raid6_altivec8;
+=======================
+lib/raid6/algos.c
+-------
+struct raid6_calls raid6_call;
+
+
