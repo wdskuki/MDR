@@ -6,16 +6,17 @@ struct md_personality raid6_personality{
 	...
 }	
 
-make_request() 
-	--> sync_request() 
-		--> handle_stripe() 
-			--> raid_run_ops() 
-				--> ops_run_compute5() 
-					--> async_xor()
-				--> ops_run_compute6_1()
-					--> async_gen_syndrome() /*missing Q*/
-					--> async_xor() /* Compute any data- or P-drive using XOR */
-				--> ops_run_compute6_2()
+		sync_request(struct mddev *mddev, sector_t sector_nr, int *skipped, int go_faster) 
+		--> handle_stripe(struct stripe_head *sh) 
+			--> raid_run_ops(struct stripe_head *sh, unsigned long ops_request) 
+				--> ops_run_compute5(struct stripe_head *sh, struct raid5_percpu *percpu) 
+					--> async_xor(struct page *dest, struct page **src_list, unsigned int offset, int src_cnt, size_t len, struct async_submit_ctl *submit)
+				--> ops_run_compute6_1(struct stripe_head *sh, struct raid5_percpu *percpu)
+					--> async_gen_syndrome(struct page **blocks, unsigned int offset, int disks,
+		   size_t len, struct async_submit_ctl *submit) /*missing Q, e.g., async_gen_syndrome(blocks, 0, count+2, STRIPE_SIZE, &submit);*/
+		   				
+					--> async_xor(struct page *dest, struct page **src_list, unsigned int offset, int src_cnt, size_t len, struct async_submit_ctl *submit) /* Compute any data- or P-drive using XOR */
+				--> ops_run_compute6_2(struct stripe_head *sh, struct raid5_percpu *percpu)
 					--> /* Missing D+Q: recompute D from P, then recompute Q */
 					--> async_gen_syndrome() /* Missing P+Q, just recompute */
 					--> async_raid6_datap_recov() /* We're missing D+P. */
@@ -95,4 +96,59 @@ lib/raid6/algos.c
 -------
 struct raid6_calls raid6_call;
 
+
+=======================
+lib/raid6/sse1.c
+-------
+/*
+ *	disks 	:	the number of all disks(include [D] + P + Q)
+ * 	bytes	:	the number of elemnts stored in each disks
+ * 	ptrs	:  	the 2-D matrixs of elements. each row reprents disk, and ptrs[disks-2] is 'P',
+ *		  		ptrs[disks-1] is 'Q'
+ *	--------
+ *	the func fill the 'P' and 'Q', P is 'xor' of all data, and Q is 'rs' of all data.
+ */
+static void raid6_sse11_gen_syndrome(int disks, size_t bytes, void **ptrs)
+
+
+
+========================
+
+static void make_request(struct mddev *mddev, struct bio * bi)
+--> raid5_compute_sector(struct r5conf *conf, sector_t r_sector,int previous, int *dd_idx, struct stripe_head *sh)
+
+
+
+
+========================
+drivers/md/raid5.c
+------------------------
+make_request(struct mddev *mddev, struct bio * bi) /*started by RAID5/6 sub module*/
+--> stripe_head *sh = get_active_stripe()
+--> 
+------------------------
+
+sync_request(struct mddev *mddev, sector_t sector_nr, int *skipped, int go_faster) /*started by MD module*/
+--> stripe_head *sh = get_active_stripe()
+--> handle_stripe(sh)
+
+------------------------
+
+raid5d(struct mddev *mddev) 
+--> md_check_recovery() /*check if any sync work to be done*/
+--> handle_stripe(sh)
+
+
+drivers/md/md.c
+------------------------
+md_check_recovery(struct mddev *mddev)
+--> md_register_thread(md_do_sync)
+	--> kthread_run() /*create a kernel thread*/
+--> md_wakeup_thread(mddev->sync_thread)
+	--> wake_up(&thread->wqueue)
+
+
+------------------------
+md_do_sync(struct mddev *mddev)
+--> mddev->pers->sync_request()
 
